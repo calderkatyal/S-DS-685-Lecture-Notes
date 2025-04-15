@@ -1,0 +1,818 @@
+\documentclass{article}
+
+%~~~~~~~~~ Document setup
+\usepackage[english]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage[a4paper,left=3cm,bottom=3cm]{geometry}
+\usepackage{indentfirst}
+\usepackage{amsmath}
+\usepackage{bm}
+\usepackage{graphicx}
+\usepackage[export]{adjustbox}
+\usepackage{fancyhdr}
+\usepackage[colorlinks=true,citecolor=blue,urlcolor=blue,linkcolor=black]{hyperref}
+\usepackage{natbib}
+\usepackage{flafter}
+\usepackage[framemethod=tikz]{mdframed}
+\usepackage{color}
+\usepackage{wrapfig}
+\usepackage{lipsum}
+\usepackage{amsfonts}
+\usepackage{listings}
+
+
+%~~~~~~~~~ Multi-column setup
+\usepackage{multicol}
+\setlength{\columnsep}{1cm}
+\setlength{\columnseprule}{1pt}
+\def\columnseprulecolor{\color{black}}
+\usepackage{float}
+\setlength{\parindent}{0pt}
+
+%~~~~~~~~~ Page setup
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{S\&DS 685 Lecture Notes (4/15)}
+\lfoot{Calder Katyal}
+\rfoot{Page \thepage}
+\renewcommand{\footrulewidth}{0.4pt}
+
+%~~~~~~~~~ Python Code Formatting (NeurIPS-style)
+% Define extra colors first
+\definecolor{deepblue}{rgb}{0,0,0.5}
+\definecolor{deepred}{rgb}{0.6,0,0}
+\definecolor{deepgreen}{rgb}{0,0.5,0}
+\definecolor{custompurple}{rgb}{0.5,0.0,0.5}
+\definecolor{customteal}{rgb}{0.0,0.5,0.5}
+\definecolor{customorange}{rgb}{1.0,0.4,0.0}
+
+% Define fixed-width fonts
+\DeclareFixedFont{\ttb}{T1}{txtt}{bx}{n}{10}
+\DeclareFixedFont{\ttm}{T1}{txtt}{m}{n}{10}
+
+% Base Python style
+\lstdefinestyle{mypython}{
+    language=Python,
+    basicstyle=\ttm,
+    keywordstyle=\ttb\color{deepblue},
+    stringstyle=\color{deepgreen},
+    commentstyle=\color{gray},
+    emphstyle=\ttb\color{deepred},
+    emph={__init__,self},
+    frame=tb,
+    showstringspaces=false,
+    columns=fullflexible
+}
+
+% Layered emph groups (LaTeX requires separate calls)
+\lstset{
+    style=mypython,
+    % User-defined functions (logic or update steps)
+    emph={[2]update_q,epsilon_greedy,discretize,select_action,update_q_network,update_ddpg,update_sac,update_policy,update_actor,update_critic},
+    emphstyle={[2]\ttb\color{deepblue}},
+    % Objects / models / modules
+    emph={[3]policy_net,target_net,optimizer,replay_buffer,env,actor,critic},
+    emphstyle={[3]\color{custompurple}},
+    % Variables
+    emph={[4]state,next_state,action,reward,done,step,loss,noise,log_probs,rewards,log_prob,td_target,td_error,advantage,old_log_probs,new_log_probs,kl},
+    emphstyle={[4]\color{customteal}},
+    % PyTorch and common libs
+    emph={[5]torch,F,argmax,no_grad,max,values,gather,zero_grad,backward,append,load_state_dict,sample_action,mean},
+    emphstyle={[5]\color{customorange}}
+}
+
+% Python environment
+\lstnewenvironment{python}[1][]{
+    \lstset{style=mypython,#1}
+}{}
+
+
+
+%~~~~~~~~~ Title
+\title{S\&DS 685 Lecture Notes (4/15)}
+\author{Calder Katyal}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+
+\section{Policy Evaluation Methods}
+
+\subsection{TD vs Monte Carlo}
+We want to estimate the value function $V^\pi(s)$ for a given policy $\pi$.
+
+\begin{itemize}
+    \item \textbf{Temporal Difference (TD(0))}:
+        \begin{equation}
+            V^\pi(s_t) \approx r_t + \gamma V(s_{t+1})
+        \end{equation}
+        \begin{itemize}
+            \item \textit{Properties:}
+                \begin{itemize}
+                    \item Biased estimator
+                    \item Low variance
+                    \item Uses bootstrapping
+                \end{itemize}
+        \end{itemize}
+    
+    \item \textbf{Monte Carlo (TD(1))}:
+        \begin{equation}
+            V^\pi(s_t) \approx \sum_{l=t}^\infty \gamma^{l - t} r_l
+        \end{equation}
+        \begin{itemize}
+            \item \textit{Properties:}
+                \begin{itemize}
+                    \item Unbiased estimator
+                    \item High variance
+                    \item Uses complete episode returns
+                \end{itemize}
+        \end{itemize}
+\end{itemize}
+
+\subsection{Interpolation Methods}
+
+\subsubsection{n-step Returns}
+The $n$-step return provides a smooth interpolation:
+\begin{equation}
+    G_t^{(n)} = \sum_{k=0}^{n-1} \gamma^k r_{t+k} + \gamma^n V(s_{t+n})
+\end{equation}
+
+\begin{itemize}
+    \item Special cases:
+        \begin{itemize}
+            \item $n=1$: TD(0)
+            \item $n=\infty$: Monte Carlo
+        \end{itemize}
+    \item Trade-off:
+        \begin{itemize}
+            \item Larger $n$ → less bias, more variance
+            \item Smaller $n$ → more bias, less variance
+        \end{itemize}
+\end{itemize}
+
+\subsubsection{TD($\lambda$)}
+The $\lambda$-return combines all $n$-step returns:
+\begin{equation}
+    G_t^\lambda = (1 - \lambda) \sum_{n=1}^\infty \lambda^{n-1} G_t^{(n)}
+\end{equation}
+
+\begin{itemize}
+    \item Weighting characteristics:
+        \begin{itemize}
+            \item Recent returns weighted more heavily
+            \item Distant returns decay exponentially
+        \end{itemize}
+    \item Special cases:
+        \begin{itemize}
+            \item $\lambda=0$: TD(0)
+            \item $\lambda=1$: Monte Carlo
+        \end{itemize}
+\end{itemize}
+
+\section{Generalized Advantage Estimation}
+
+\subsection{Advantage Function}
+The advantage function measures how much better an action is than average:
+\begin{equation}
+    A^\pi(s,a) = Q^\pi(s,a) - V^\pi(s)
+\end{equation}
+
+\subsection{GAE Formulation}
+Generalized Advantage Estimation combines TD errors:
+\begin{equation}
+    \hat{A}_t^\lambda = \sum_{l=0}^\infty (\gamma \lambda)^l \delta_{t+l}^V
+\end{equation}
+where the TD error $\delta_t^V$ is:
+\begin{equation}
+    \delta_t^V = r_t + \gamma V(s_{t+1}) - V(s_t)
+\end{equation}
+
+\begin{itemize}
+    \item Practical implementation:
+        \begin{itemize}
+            \item Used in PPO, TRPO, and other actor-critic methods
+            \item Typically $\lambda \in [0.9, 0.99]$
+        \end{itemize}
+    \item Variance reduction:
+        \begin{itemize}
+            \item Lower $\lambda$ reduces variance but increases bias
+            \item Higher $\lambda$ reduces bias but increases variance
+        \end{itemize}
+\end{itemize}
+
+\section*{Implementation Notes}
+\begin{itemize}
+    \item Requires value function approximation
+    \item Works with both tabular and function approximation methods
+    \item Can be combined with deep neural networks (Deep RL)
+\end{itemize}
+
+\section{Proximal Policy Optimization (PPO)}
+
+Proximal Policy Optimization is a first-order optimization algorithm designed to stabilize policy learning by preventing overly large policy updates. It builds on policy gradient methods but uses a clipped surrogate loss to constrain the change in policy.
+
+\subsection{Advantage Estimation (GAE)}
+
+Both PPO and A2C make use of Generalized Advantage Estimation (GAE) to compute the advantage:
+\begin{equation}
+    \hat{A}_t = \sum_{k=0}^{\infty} (\gamma \lambda)^k \delta_{t+k}, \quad \text{where} \quad \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t)
+\end{equation}
+
+\subsection{Critic Loss}
+
+There are many possible constructions for the value function loss. In practice, PPO often uses a TD(0) target:
+\begin{equation}
+    y_t = r_t + \gamma V_\phi(s_{t+1})
+\end{equation}
+\begin{equation}
+    L^{\text{VF}}(\phi) = \left( y_t - V_\phi(s_t) \right)^2
+\end{equation}
+
+In modern implementations such as \texttt{Stable Baselines3}, GAE is used to estimate the value targets.
+
+\subsection{Actor Loss (Clipped Surrogate Objective)}
+
+The core idea in PPO is to clip the policy ratio:
+\begin{equation}
+    P_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\text{old}}(a_t|s_t)}
+\end{equation}
+The clipped surrogate objective is defined as:
+\begin{equation}
+    L^{\text{CLIP}}(\theta) = \mathbb{E}_t \left[ \min \left( P_t(\theta)\, \hat{A}_t,\; \text{clip}(P_t(\theta), 1 - \epsilon, 1 + \epsilon) \cdot \hat{A}_t \right) \right]
+\end{equation}
+This prevents the policy from changing too much in a single update.
+
+\subsection{Gradient Computation of Clipped Loss}
+
+The clipped objective results in zero gradient when the ratio $P_t(\theta)$ lies outside the range $[1 - \epsilon, 1 + \epsilon]$ and the objective is not improving. The behavior can be summarized as:
+
+\begin{center}
+\begin{tabular}{|c|c|c|c|c|c|}
+\hline
+$P_t(\theta)$ & $A_t$ & Return Value & Clipped? & Sign & Gradient \\
+\hline
+$\in [1-\epsilon, 1+\epsilon]$ & $+$ & $P_t(\theta)A_t$ & no & $+$ & \checkmark \\
+$\in [1-\epsilon, 1+\epsilon]$ & $-$ & $P_t(\theta)A_t$ & no & $-$ & \checkmark \\
+$< 1-\epsilon$ & $+$ & $P_t(\theta)A_t$ & no & $+$ & \checkmark \\
+$< 1-\epsilon$ & $-$ & $(1 - \epsilon)A_t$ & yes & $-$ & $0$ \\
+$> 1+\epsilon$ & $+$ & $(1 + \epsilon)A_t$ & yes & $+$ & $0$ \\
+$> 1+\epsilon$ & $-$ & $P_t(\theta)A_t$ & no & $-$ & \checkmark \\
+\hline
+\end{tabular}
+\end{center}
+
+The clipping behavior can also be visualized as a piecewise function of the ratio $P_t(\theta)$.
+
+\subsection{Optimization Procedure}
+
+\textbf{Note:} $\pi_{\text{old}}$ and the data buffer are held fixed for $T = n_{\text{epochs}} \times \frac{\text{buffer size}}{\text{batch size}}$ steps.
+
+\begin{itemize}
+    \item Initialize: $\pi_\theta^0 \gets \pi_{\text{old}}$
+    \item For $t = 1, 2, \ldots, T$:
+    \begin{itemize}
+        \item Sample minibatch, compute stochastic gradient:
+        \begin{equation}
+            g^t = \nabla_\theta L^{\text{CLIP}}(\theta^t)
+        \end{equation}
+        \item Update:
+        \begin{equation}
+            \theta^{t+1} \gets \theta^t + \eta g^t
+        \end{equation}
+        \item Optionally, monitor KL divergence:
+        \begin{equation}
+            \text{KL}(\pi_{\text{old}}, \pi_\theta) = \mathbb{E}_{a \sim \pi_{\text{old}}} \left[ \log \pi_{\text{old}}(a|s) - \log \pi_\theta(a|s) \right]
+        \end{equation}
+        to check whether the new policy has drifted too far from the old.
+    \end{itemize}
+\end{itemize}
+
+\subsection{Comparison with A2C}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Property} & \textbf{PPO} & \textbf{A2C} \\
+\hline
+Buffer Size & $n_{\text{steps}} \times n_{\text{envs}}$ & $n_{\text{steps}} \times n_{\text{envs}}$ \\
+\hline
+Gradient Steps / Rollout & $n_{\text{epochs}} \times \frac{n_{\text{steps}} \times n_{\text{envs}}}{n_{\text{batch}}}$ & $1$ \\
+\hline
+Sample Reuse & Multiple passes & Single pass \\
+\hline
+Sample Efficiency & Higher & Lower \\
+\hline
+Update Frequency & Fewer updates (per rollout) & Frequent updates (smaller rollouts) \\
+\hline
+\end{tabular}
+\caption{Comparison between PPO and A2C}
+\end{table}
+
+\subsection{Loss Summary}
+
+\begin{itemize}
+    \item \textbf{Actor Loss (A2C):}
+    \begin{equation}
+        L^{\text{A2C}}_{\text{actor}} = - \mathbb{E}_t \left[ \hat{A}_t \cdot \log \pi_\theta(a_t | s_t) \right]
+    \end{equation}
+    
+    \item \textbf{Actor Loss (PPO):}
+    \begin{equation}
+        L^{\text{PPO}}_{\text{actor}} = - \mathbb{E}_t \left[ \min \left( r_t(\theta) \hat{A}_t,\; \text{clip}(r_t(\theta), 1 - \epsilon, 1 + \epsilon)\hat{A}_t \right) \right]
+    \end{equation}
+    where $r_t(\theta) = \frac{\pi_\theta(a_t|s_t)}{\pi_{\text{old}}(a_t|s_t)}$
+
+    \item \textbf{Value Loss:}
+    \begin{equation}
+        L^{\text{critic}} = \left( y_t - V_\phi(s_t) \right)^2
+    \end{equation}
+    
+    \item \textbf{Total PPO Objective:}
+    \begin{equation}
+        L^{\text{total}} = L^{\text{actor}} + c_1 L^{\text{critic}} - c_2 \mathcal{H}[\pi_\theta]
+    \end{equation}
+\end{itemize}
+
+
+\section{Q-Learning}
+
+Q-Learning is a classic \textbf{off-policy}, \textbf{model-free} reinforcement learning algorithm. It estimates the optimal action-value function $Q^*(s,a)$ by iteratively applying the Bellman optimality principle.
+
+\subsection{Bellman Equation and Q-Update}
+
+The optimal action-value function satisfies the recursive Bellman equation:
+\begin{equation}
+    Q^*(s,a) = \mathbb{E}_{s'}\left[ r + \gamma \max_{a'} Q^*(s', a') \right]
+\end{equation}
+
+We approximate this via temporal-difference learning:
+\begin{equation}
+    Q(s,a) \leftarrow Q(s,a) + \alpha \left[ r + \gamma \max_{a'} Q(s',a') - Q(s,a) \right]
+\end{equation}
+where $\alpha$ is the learning rate, $\gamma$ is the discount factor, and $s'$ is the next state.
+
+\subsection{Exploration: $\varepsilon$-Greedy Policy}
+
+Actions are selected using an $\varepsilon$-greedy strategy to ensure exploration:
+\begin{equation}
+    a =
+    \begin{cases}
+        \text{random action} & \text{with probability } \varepsilon \\
+        \arg\max_a Q(s,a) & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+\vspace{0.5em}
+\noindent\textbf{Example:}
+\begin{python}
+if random.random() < epsilon:
+    action = env.action_space.sample()
+else:
+    action = np.argmax(q_table[state])
+\end{python}
+
+\subsection{State Discretization}
+
+In continuous environments (like CartPole), we discretize observations into bins to enable a tabular Q-function:
+
+\begin{python}
+def discretize(obs, bins):
+    return tuple(np.digitize(x, b) for x, b in zip(obs, bins))
+\end{python}
+
+Initialize the Q-table as a multi-dimensional array:
+\begin{python}
+q_table = np.zeros(state_shape + (n_actions,))
+\end{python}
+
+\subsection{Q-Learning Update Step}
+
+Each step updates the Q-value estimate toward a bootstrapped target:
+
+\begin{python}
+td_target = reward + gamma * np.max(q_table[next_state])
+q_table[state][action] += alpha * (td_target - q_table[state][action])
+\end{python}
+
+\subsection{Training Loop Sketch}
+
+The full learning loop interacts with the environment and updates $Q$ iteratively:
+
+\begin{python}
+for episode in range(n_episodes):
+    state = discretize(env.reset(), bins)
+    done = False
+    while not done:
+        action = epsilon_greedy(state)
+        obs, reward, done, _ = env.step(action)
+        next_state = discretize(obs, bins)
+        update_q(state, action, reward, next_state)
+        state = next_state
+\end{python}
+
+\subsection{Convergence Conditions}
+
+Q-learning converges to the optimal $Q^*$ under these conditions:
+\begin{itemize}
+    \item All state-action pairs $(s,a)$ are visited infinitely often
+    \item Learning rate $\alpha_t(s,a)$ decays over time
+    \item Policy becomes greedy in the limit
+\end{itemize}
+
+\subsection{Summary}
+
+\begin{itemize}
+    \item Q-learning is \emph{off-policy}: it learns from any behavior policy
+    \item Suitable for discrete or discretized environments
+    \item Forms the foundation of Deep Q-Networks (DQN)
+\end{itemize}
+
+\section{Deep Q-Networks (DQN)}
+
+Deep Q-Networks extend Q-learning by using a neural network to approximate $Q(s,a;\theta)$, enabling application to high-dimensional or continuous state spaces.
+
+\subsection{Key Idea}
+
+Instead of a Q-table, DQN uses a neural network parameterized by $\theta$ to predict Q-values:
+\begin{equation}
+    Q(s,a;\theta) \approx Q^*(s,a)
+\end{equation}
+
+The TD target becomes:
+\begin{equation}
+    y = r + \gamma \max_{a'} Q(s', a'; \theta^{-})
+\end{equation}
+where $\theta^{-}$ are the parameters of the target network, held fixed for stability.
+
+\subsection{Experience Replay}
+
+To decorrelate samples and improve data efficiency, DQN uses a replay buffer:
+\begin{python}
+replay_buffer = deque(maxlen=buffer_size)
+replay_buffer.append((state, action, reward, next_state, done))
+\end{python}
+
+During training:
+\begin{python}
+batch = random.sample(replay_buffer, batch_size)
+\end{python}
+
+\subsection{Target Network}
+
+The target network $\theta^-$ is updated less frequently:
+\begin{python}
+if step % target_update_freq == 0:
+    target_net.load_state_dict(policy_net.state_dict())
+\end{python}
+
+\subsection{Loss Function}
+
+The loss is the squared TD error over a batch:
+\begin{equation}
+    L(\theta) = \mathbb{E}_{(s,a,r,s') \sim \mathcal{D}} \left[ \left( y - Q(s,a;\theta) \right)^2 \right]
+\end{equation}
+\begin{python}
+with torch.no_grad():
+    target_q = reward + gamma * torch.max(target_net(next_state), dim=1).values
+loss = F.mse_loss(policy_net(state).gather(1, action), target_q.unsqueeze(1))
+\end{python}
+
+\subsection{Training Loop Outline}
+
+\begin{python}
+for episode in range(n_episodes):
+    state = env.reset()
+    done = False
+    while not done:
+        action = select_action(state, epsilon)
+        next_state, reward, done, _ = env.step(action)
+        replay_buffer.append((state, action, reward, next_state, done))
+        state = next_state
+
+        if len(replay_buffer) > batch_size:
+            update_q_network()
+\end{python}
+
+\subsection{Summary of DQN Improvements}
+
+\begin{itemize}
+    \item \textbf{Function approximation}: Q-values from a neural network
+    \item \textbf{Experience replay}: Breaks correlation between sequential samples
+    \item \textbf{Target network}: Stabilizes learning
+\end{itemize}
+
+
+\section{Double DQN}
+
+Double DQN addresses a key limitation of DQN: overestimation bias in the $\max$ operator of the TD target.
+
+\subsection{Motivation}
+
+Standard DQN uses:
+\begin{equation}
+    y = r + \gamma \max_{a'} Q(s', a'; \theta^{-})
+\end{equation}
+
+But this tends to overestimate values. Double DQN decouples action selection and evaluation:
+\begin{equation}
+    y = r + \gamma Q(s', \arg\max_{a'} Q(s', a'; \theta);\; \theta^{-})
+\end{equation}
+
+\subsection{Target Calculation}
+
+\begin{python}
+with torch.no_grad():
+    next_actions = policy_net(next_state).argmax(dim=1, keepdim=True)
+    target_q = reward + gamma * target_net(next_state).gather(1, next_actions)
+\end{python}
+
+\subsection{Full Training Update (Double DQN)}
+
+\begin{python}
+q_values = policy_net(state).gather(1, action)
+loss = F.mse_loss(q_values, target_q)
+optimizer.zero_grad()
+loss.backward()
+optimizer.step()
+\end{python}
+
+\subsection{Target Network Sync}
+
+As in DQN, periodically sync target network:
+\begin{python}
+if step % target_update_freq == 0:
+    target_net.load_state_dict(policy_net.state_dict())
+\end{python}
+
+\subsection{Benefits}
+
+\begin{itemize}
+    \item Reduces overestimation of Q-values
+    \item Improves stability and performance across many environments
+    \item Especially useful when combined with prioritized replay or dueling architectures
+\end{itemize}
+
+\subsection{Summary}
+
+\begin{itemize}
+    \item \textbf{DQN}: uses $\max Q(s',a')$ for both selecting and evaluating next action
+    \item \textbf{Double DQN}: selects using $\arg\max Q(s',a';\theta)$ but evaluates with $Q(s',a;\theta^-)$
+    \item Prevents optimistic bias in action-value updates
+\end{itemize}
+
+\section{Deep Deterministic Policy Gradient (DDPG)}
+
+DDPG is an \textbf{off-policy}, \textbf{actor-critic}, and \textbf{model-free} algorithm for continuous action spaces. It extends DQN by combining it with ideas from deterministic policy gradients.
+
+\subsection{Critic Update}
+
+The critic approximates the Q-function using a network $Q_\phi(s, a)$.
+
+Target values use a separate target network $Q_{\phi^-}$:
+\begin{equation}
+    y_t = r_t + \gamma (1 - d_t) Q_{\phi^-}(s_{t+1}, \mu_{\theta^-}(s_{t+1}))
+\end{equation}
+
+The critic loss minimizes TD error:
+\begin{equation}
+    L_{\text{critic}}(\phi) = \left( Q_\phi(s_t, a_t) - y_t \right)^2
+\end{equation}
+
+\subsection{Actor Update}
+
+The actor network $\mu_\theta(s)$ outputs deterministic actions. It is updated by maximizing the Q-value of the predicted action:
+\begin{equation}
+    \nabla_\theta J(\mu_\theta) = \mathbb{E}_{s \sim \mathcal{D}} \left[ \nabla_a Q_\phi(s, a)\vert_{a = \mu_\theta(s)} \nabla_\theta \mu_\theta(s) \right]
+\end{equation}
+
+\subsection{Target Networks}
+
+As with DQN, we use target networks for stability:
+\begin{equation}
+    \phi^- \leftarrow \tau \phi + (1 - \tau)\phi^- \quad,\quad \theta^- \leftarrow \tau \theta + (1 - \tau)\theta^-
+\end{equation}
+
+\subsection{Training Loop Sketch}
+
+\begin{python}
+for episode in range(n_episodes):
+    state = env.reset()
+    done = False
+    while not done:
+        action = actor(state) + noise.sample()
+        next_state, reward, done, _ = env.step(action)
+        replay_buffer.append((state, action, reward, next_state, done))
+        if len(replay_buffer) > batch_size:
+            update_ddpg()
+        state = next_state
+\end{python}
+
+\subsection{Summary}
+
+\begin{itemize}
+    \item Actor outputs \textbf{deterministic} actions.
+    \item Critic learns Q-values.
+    \item Uses target networks and replay buffer.
+    \item Suitable for continuous control tasks.
+\end{itemize}
+
+\section{Soft Actor-Critic (SAC)}
+
+SAC is an \textbf{off-policy}, \textbf{stochastic}, \textbf{actor-critic} algorithm that maximizes both reward and entropy:
+\begin{equation}
+    J(\pi) = \sum_{t=0}^{T} \mathbb{E}_{(s_t, a_t) \sim \rho_\pi} \left[ r(s_t, a_t) + \alpha \mathcal{H}(\pi(\cdot|s_t)) \right]
+\end{equation}
+
+\subsection{Q-function Update}
+
+There are two Q-networks to reduce overestimation. The target is computed using the minimum of both:
+\begin{equation}
+    y_t = r_t + \gamma (1 - d_t) \left[ \min_{i=1,2} Q_{\phi_i^-}(s_{t+1}, a_{t+1}) - \alpha \log \pi(a_{t+1} | s_{t+1}) \right]
+\end{equation}
+
+\subsection{Policy Update}
+
+The policy $\pi_\theta(a|s)$ is stochastic and differentiable. The objective:
+\begin{equation}
+    J_\pi(\theta) = \mathbb{E}_{s_t \sim \mathcal{D}} \left[ \mathbb{E}_{a_t \sim \pi_\theta} \left[ \alpha \log \pi_\theta(a_t | s_t) - Q_\phi(s_t, a_t) \right] \right]
+\end{equation}
+
+\subsection{Temperature Parameter Update}
+
+$\alpha$ controls the trade-off between exploration and exploitation:
+\begin{equation}
+    J(\alpha) = \mathbb{E}_{a_t \sim \pi_\theta} \left[ -\alpha \left( \log \pi_\theta(a_t|s_t) + \mathcal{H}_{\text{target}} \right) \right]
+\end{equation}
+
+\subsection{Entropy-Augmented Learning Loop}
+
+\begin{python}
+for episode in range(n_episodes):
+    state = env.reset()
+    done = False
+    while not done:
+        action = actor.sample_action(state)
+        next_state, reward, done, _ = env.step(action)
+        replay_buffer.append((state, action, reward, next_state, done))
+        if len(replay_buffer) > batch_size:
+            update_sac()
+        state = next_state
+\end{python}
+
+\subsection{Summary}
+
+\begin{itemize}
+    \item Maximizes both expected return and policy entropy.
+    \item Two critics ($Q_1$, $Q_2$) and one stochastic actor.
+    \item Supports automatic entropy tuning.
+    \item Performs well in continuous domains (e.g., Mujoco).
+\end{itemize}
+
+\section{Policy Gradient (REINFORCE)}
+
+Recall: Policy gradient methods directly optimize the policy $\pi_\theta(a|s)$ by maximizing the expected return. These methods are \textbf{on-policy} and update parameters via gradient ascent.
+
+\subsection{Objective Function}
+
+Let $J(\theta)$ be the expected return under policy $\pi_\theta$:
+\begin{equation}
+    J(\theta) = \mathbb{E}_{\pi_\theta} \left[ \sum_{t=0}^{T} \gamma^t r_t \right]
+\end{equation}
+
+\subsection{REINFORCE Algorithm}
+
+The gradient of the objective function is:
+\begin{equation}
+    \nabla_\theta J(\theta) = \mathbb{E}_{\pi_\theta} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) \cdot R_t \right]
+\end{equation}
+where $R_t = \sum_{k=t}^T \gamma^{k-t} r_k$ is the return from time $t$ onward.
+
+\textbf{Update Rule:}
+\begin{equation}
+    \theta \leftarrow \theta + \alpha \nabla_\theta \log \pi_\theta(a_t | s_t) \cdot R_t
+\end{equation}
+
+\subsection{Training Sketch}
+
+\begin{python}
+for episode in range(n_episodes):
+    log_probs = []
+    rewards = []
+    state = env.reset()
+    done = False
+    while not done:
+        action, log_prob = select_action(state)
+        next_state, reward, done, _ = env.step(action)
+        log_probs.append(log_prob)
+        rewards.append(reward)
+        state = next_state
+    update_policy(log_probs, rewards)
+\end{python}
+
+\subsection{Summary}
+
+\begin{itemize}
+    \item On-policy method
+    \item Learns directly from episodic returns
+    \item High variance, but unbiased
+    \item Forms the basis for Actor-Critic
+\end{itemize}
+
+\section{Actor-Critic}
+
+Recall: Actor-Critic methods combine policy-based and value-based learning. The actor proposes actions, and the critic evaluates them.
+
+\subsection{Advantage-Based Policy Gradient}
+
+The critic estimates $V^\pi(s)$, and we use the advantage:
+\begin{equation}
+    A(s_t, a_t) = R_t - V(s_t)
+\end{equation}
+The policy gradient becomes:
+\begin{equation}
+    \nabla_\theta J(\theta) = \mathbb{E}_{\pi_\theta} \left[ \nabla_\theta \log \pi_\theta(a_t | s_t) \cdot A(s_t, a_t) \right]
+\end{equation}
+
+\subsection{Critic Update (TD(0))}
+
+\begin{equation}
+    y_t = r_t + \gamma V(s_{t+1})
+\end{equation}
+\begin{equation}
+    L_{\text{critic}} = \left( y_t - V(s_t) \right)^2
+\end{equation}
+
+\subsection{Actor-Critic Loop}
+
+\begin{python}
+for episode in range(n_episodes):
+    state = env.reset()
+    done = False
+    while not done:
+        action, log_prob = actor(state)
+        next_state, reward, done, _ = env.step(action)
+        td_target = reward + gamma * critic(next_state)
+        td_error = td_target - critic(state)
+        update_actor(log_prob, td_error)
+        update_critic(state, td_target)
+        state = next_state
+\end{python}
+
+\subsection{Summary}
+
+\begin{itemize}
+    \item Combines REINFORCE and value learning
+    \item Reduces variance with a learned baseline
+    \item Suitable for both discrete and continuous actions
+\end{itemize}
+
+\section{PPO (Penalty Variant)}
+
+Recall: PPO is an \textbf{on-policy} policy gradient method that constrains updates to avoid destabilization.
+
+\subsection{KL-Penalty Objective}
+
+Instead of hard clipping, PPO (Penalty) penalizes the deviation from the old policy using KL divergence:
+\begin{equation}
+    L^{\text{PEN}}(\theta) = \mathbb{E}_t \left[ \frac{\pi_\theta(a_t|s_t)}{\pi_{\text{old}}(a_t|s_t)} \hat{A}_t - \beta \, \text{KL}[\pi_{\text{old}}(\cdot|s_t), \pi_\theta(\cdot|s_t)] \right]
+\end{equation}
+where $\beta$ controls the strength of the penalty.
+
+\subsection{Update Steps}
+
+\begin{python}
+for epoch in range(n_epochs):
+    for batch in rollout:
+        ratio = new_log_probs - old_log_probs
+        kl = compute_kl_divergence(new_probs, old_probs)
+        loss = -(ratio * advantage - beta * kl).mean()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+\end{python}
+
+\subsection{Comparison to PPO-Clip}
+
+\begin{itemize}
+    \item PPO-Penalty uses a KL term to softly penalize updates.
+    \item PPO-Clip truncates updates via a hard ratio bound.
+    \item Both share the same core motivation: stable, monotonic improvements.
+\end{itemize}
+
+\subsection{Summary}
+
+\begin{itemize}
+    \item On-policy, first-order method
+    \item Stabilizes learning via trust region approximation
+    \item Penalty-based version allows continuous control of update magnitude
+\end{itemize}
+
+
+
+
+
+\end{document}
+
